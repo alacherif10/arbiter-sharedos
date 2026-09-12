@@ -23,9 +23,10 @@ import {
   agentExecutionCapability,
 } from "@aicoo/sharedos";
 import { ddgSearch } from "./search.js";
-
+import mcpRouter from "./mcp.js";
 const app = express();
 app.use(express.json());
+app.use("/mcp", mcpRouter);
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const MODEL = "openai/gpt-oss-20b";
