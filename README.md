@@ -1,90 +1,84 @@
-# Research Lookup — SharedOS Hackathon Service
+# Arbiter — Grounded Claim Verification for Agent Arenas
 
-A callable service for the SharedOS Arena. Another agent sends a question,
-this service answers it concisely using Groq (free tier, no credit card).
+**Send a claim. Get `supported`, `contradicted`, or `insufficient` — with citeable live sources. Or an explicit refusal. Never a fabrication.**
 
-No live web search — answers come from the model's own knowledge, not a
-real-time search. This was a deliberate tradeoff for reliability: Gemini's
-free tier kept returning inconsistent quota errors, and Groq's search tool
-is billed per-call rather than free. Swap in a free, keyless search API
-(e.g. DuckDuckGo) later if there's time before submission.
+## Why this exists
 
-## What it does
+Round 1 of an agent contest is a critique. Claims get made — about other agents products, versions, facts. Almost no agent can independently check a claim.
 
-- **Input:** `{ "question": "..." }`
-- **Output:** `{ "answer": "...", "sources": ["https://...", ...] }`
-- **Price:** 5 Arena credits
-- **Response time:** well under the 5-minute cap (typically a few seconds)
+Arbiter checks them. Two endpoints, one guarantee: every answer is grounded in live search with citeable URLs, or the service refuses. **The model never sees the question unless search returned results**, so it cannot invent an answer.
 
-## Setup
+## Endpoints
 
-**Note:** this project is ESM (`"type": "module"` in `package.json`), because
-`@aicoo/sharedos` is ESM-only. Node.js 18+ handles this fine as long as you
-don't rename files to `.cjs` or mix in `require()`.
+### POST /service/verify
 
-1. Install dependencies:
-   ```
-   npm install
-   ```
-2. Copy `.env.example` to `.env` and fill in:
-   - `GROQ_API_KEY` — free, no credit card required, from
-     https://console.groq.com/keys
-   - No SharedOS account/tenant ID needed — it's a self-hosted, Apache-2.0
-     npm package. The kernel is embedded directly in `server.js`.
-3. Run it:
-   ```
-   npm start
-   ```
+Input:
+    { "claim": "The Eiffel Tower is in Paris." }
 
-## Testing locally
+Output:
+    {
+      "verdict": "supported",
+      "evidence": "The Eiffel Tower is a lattice tower on the Champ de Mars in Paris, France. [1]",
+      "sources": ["https://en.wikipedia.org/wiki/Eiffel_Tower"],
+      "note": "Verified against live sources."
+    }
 
-```bash
-curl -X POST http://localhost:3000/service/research \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What is the current version of the SharedOS npm package?"}'
-```
+verdict is one of supported, contradicted, or insufficient.
 
-Check the metadata endpoint too:
+### POST /service/research
 
-```bash
-curl http://localhost:3000/service/research/info
-```
+Input:
+    { "question": "What is a package manager?" }
 
-## SharedOS integration — what's already wired in
+Output:
+    {
+      "answer": "A package manager ...",
+      "sources": ["https://en.wikipedia.org/wiki/Package_manager"],
+      "note": "Answered from live search."
+    }
 
-`server.js` embeds a real `SharedOSKernel`: a grant scoping the service
-agent to one purpose (`research-lookup-service`), deny-by-default (no
-capabilities beyond that purpose), and every request routed through
-`SharedOSExecutor` so it shows up in the turn/audit trail. This satisfies
-the "built on SharedOS" requirement structurally.
+### GET /service/research/info
 
-**Still to do before submitting:**
+Machine-readable service metadata.
 
-1. `npm install` and run a real call locally — verify the shape of
-   `result` matches the `// NOTE` comment in `server.js` (the quickstart
-   docs don't show pulling output back out of a completed turn, so this
-   needs a live check).
-2. Swap `owner.userId` from `"you"` to your actual name/handle.
-3. **Confirm with `#arena-support` how SharedNet discovery actually
-   works** — i.e., how another agent finds and calls
-   `POST /service/research` over the network. This isn't in the public
-   docs (SharedNet is marked "not documented publicly yet" on the
-   overview page), so it's presumably covered in the pinned Discord
-   materials or requires a specific registration step there.
-4. Once you know that mechanism, the `sender`/`receiver` addresses in
-   `runResearchTurn()` need to reflect the actual calling agent's
-   identity, not a placeholder pointing at `serviceAgent` on both ends.
-5. Get your product's **purpose string** (`research-lookup-service`,
-   already set) and **agent addresses** for the Devpost submission.
-6. Test an actual end-to-end call from another agent before submissions
-   close.
+### GET /health
 
-## Submission checklist reminder
+Liveness check.
 
-- [ ] Devpost project page (name, tagline, what it does, what it sells)
-- [ ] Agent's SharedNet node ID
-- [ ] Service listing (this doc covers most of it)
-- [ ] Purpose string + agent addresses
-- [ ] Repo link
-- [ ] Discord username of team lead
-- [ ] (Optional) 2-min video of a real agent-to-agent call
+## Refusal behavior
+
+When search returns nothing usable, both endpoints refuse rather than answer from model memory. This is deliberate. Most research services confidently fabricate when they do not know. Arbiter does not.
+
+## Autonomous in the Arena room
+
+An incoming room message matching verify: <claim> is automatically routed to /service/verify, and the verdict is posted back to the room. See poll.js.
+
+## Built on SharedOS
+
+Every turn runs through @aicoo/sharedos with deny-by-default grants, one purpose string (research-lookup-service), one capability, and a 3-day TTL covering the event.
+
+## Stack
+
+- Node.js + Express
+- Groq (openai/gpt-oss-20b) for synthesis
+- DuckDuckGo Lite (keyless) as primary search
+- Wikipedia REST API as fallback
+- @aicoo/sharedos for authorization
+
+## Running locally
+
+    npm install
+    cp .env.example .env
+    node server.js
+    node poll.js
+
+## Arena identity
+
+- Seat: i_JaEjZsDwrw
+- Purpose string: research-lookup-service
+- Agent ID: research-lookup-agent
+- Price: 5 credits per call
+
+## License
+
+Apache-2.0
