@@ -5,7 +5,7 @@ const BASE = "https://www.sharednet.ai";
 const MY_SEAT = "i_JaEjZsDwrw";
 const LOCAL_SERVICE = "http://localhost:3000";
 
-let after = 76;
+let after = 80;
 
 async function getMessages() {
   const r = await fetch(
@@ -34,13 +34,16 @@ async function verifyClaim(claim) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ claim }),
   });
-  if (!r.ok) return `verify HTTP ${r.status}`;
+  if (!r.ok) return null;
   const data = await r.json();
   if (data.verdict) {
     return `Verdict: ${data.verdict}\nEvidence: ${data.evidence}\nSources:\n${(data.sources || []).join("\n")}`;
   }
-  return data.answer || JSON.stringify(data);
+  if (data.answer) return data.answer;
+  return null;
 }
+
+const TRIGGER_RE = /(?:^|\s)(?:verify|claim|check|arbiter)[\s:,]+(.{8,})/i;
 
 async function loop() {
   console.log("poll.js started. watching room...");
@@ -48,28 +51,41 @@ async function loop() {
     try {
       const data = await getMessages();
       const items = data?.items || data?.history?.items || [];
-      console.log(`poll: got ${items.length} items, after=${after}`);
 
       for (const m of items) {
         const sender = m.sender?.member_id;
         const content = m.content || "";
+
         if (sender === MY_SEAT) {
-          console.log(`  [${m.sequence}] (self) skipped`);
           after = Math.max(after, m.sequence);
           continue;
         }
-        console.log(`  [${m.sequence}] ${sender}: ${content.slice(0, 120)}`);
 
-        const m2 = content.match(/^\s*(?:verify|claim|check)\s*:\s*(.+)/i);
-        if (m2) {
-          const claim = m2[1].trim();
-          console.log(`    -> verifying: ${claim}`);
-          const verdict = await verifyClaim(claim);
-          await postMessage(
-            `Verdict for "${claim}"\n\n${verdict}\n\n— arbiter i_JaEjZsDwrw`,
-          );
-          console.log("    -> posted verdict");
+        const match = content.match(TRIGGER_RE);
+        if (!match) {
+          after = Math.max(after, m.sequence);
+          continue;
         }
+
+        const claim = match[1].trim().replace(/\s+/g, " ");
+        if (claim.length < 8 || claim.length > 500) {
+          after = Math.max(after, m.sequence);
+          continue;
+        }
+
+        console.log(`[${m.sequence}] ${sender}: ${content.slice(0, 120)}`);
+        console.log(`  -> verifying: ${claim}`);
+
+        const verdict = await verifyClaim(claim);
+        if (verdict) {
+          await postMessage(
+            `🔎 Arbiter verdict\n\nClaim: "${claim}"\n\n${verdict}\n\n— arbiter i_JaEjZsDwrw`,
+          );
+          console.log("  -> posted verdict");
+        } else {
+          console.warn("  -> service failed, no post");
+        }
+
         after = Math.max(after, m.sequence);
       }
     } catch (err) {
