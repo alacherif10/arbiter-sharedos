@@ -6,14 +6,19 @@
  * sees the question unless search returned results, so it cannot fabricate.
  *
  *   POST /service/research   { question } -> { answer, sources, note }
- *   POST /service/verify     { claim }    -> { verdict, evidence, sources, note }
+ *   POST /service/verify     { claim }    -> { verdict, evidence, sources,
+ *                                              receipt, receipt_payload, note }
+ *   POST /mcp                             -> MCP JSON-RPC (verify, research)
  *   GET  /service/research/info
+ *   GET  /.well-known/agent.json
  *   GET  /health
  */
 
 import "dotenv/config";
 import express from "express";
 import Groq from "groq-sdk";
+import { readFileSync } from "fs";
+import { createHash } from "crypto";
 import {
   SharedOSKernel,
   SharedOSExecutor,
@@ -24,6 +29,7 @@ import {
 } from "@aicoo/sharedos";
 import { ddgSearch } from "./search.js";
 import mcpRouter from "./mcp.js";
+
 const app = express();
 app.use(express.json());
 app.use("/mcp", mcpRouter);
@@ -145,8 +151,6 @@ function makeResearchDriver(question, mode = "research") {
             throw err;
           }
 
-          // Helper: pick only the sources the model actually cited.
-          // Falls back to all hits if no citation markers are present.
           function pickCitedSources(text) {
             const cited = new Set();
             const re = /[\[【](\d+)[\]】]/g;
@@ -158,6 +162,16 @@ function makeResearchDriver(question, mode = "research") {
               .map((n) => hits[n - 1].url);
           }
 
+          // Deterministic receipt: hash a canonical string with no JSON
+          // key-order ambiguity and no unicode traps. Return the exact
+          // payload that was hashed so any buyer can recompute it.
+          function makeReceipt(verdict, sources) {
+            const payload =
+              "verdict=" + verdict + "|sources=" + sources.join(",");
+            const hash = createHash("sha256").update(payload).digest("hex");
+            return { receipt: "sha256:" + hash, receipt_payload: payload };
+          }
+
           if (mode === "verify") {
             const verdictMatch = raw.match(
               /VERDICT:\s*(supported|contradicted|insufficient)/i,
@@ -167,19 +181,22 @@ function makeResearchDriver(question, mode = "research") {
               ? verdictMatch[1].toLowerCase()
               : "insufficient";
             const evidence = evidenceMatch ? evidenceMatch[1].trim() : raw;
+            const sources = pickCitedSources(evidence);
+            const { receipt, receipt_payload } = makeReceipt(verdict, sources);
 
             return {
               type: "complete",
               output: {
                 verdict,
                 evidence,
-                sources: pickCitedSources(evidence),
+                sources,
+                receipt,
+                receipt_payload,
                 note: "Verified against live sources.",
               },
             };
           }
 
-          // research mode
           const isRefusal = /^not found in sources\.?$/i.test(raw);
           if (isRefusal) {
             return {
@@ -339,8 +356,9 @@ app.get("/service/research/info", (req, res) => {
       "Two services in one. POST /service/research with {question} returns a " +
       "concise answer grounded in live web sources, with source URLs. " +
       "POST /service/verify with {claim} returns a verdict of supported, " +
-      "contradicted, or insufficient, with citeable evidence. Both refuse " +
-      "rather than answer from model memory when no verified source is found.",
+      "contradicted, or insufficient, with citeable evidence and a " +
+      "verifiable SHA-256 receipt. Both refuse rather than answer from " +
+      "model memory when no verified source is found.",
     endpoints: {
       research: {
         method: "POST",
@@ -360,13 +378,27 @@ app.get("/service/research/info", (req, res) => {
           verdict: "supported | contradicted | insufficient",
           evidence: "string",
           sources: "string[]",
+          receipt: "sha256:<hex>",
+          receipt_payload: "string",
           note: "string",
         },
       },
     },
+    receipt_verification:
+      "Recompute sha256(receipt_payload) and compare to receipt. " +
+      "receipt_payload has the form: verdict=<v>|sources=<url1>,<url2>",
     price_credits: PRICE_IN_CREDITS,
     max_response_time_seconds: 60,
   });
+});
+
+app.get("/.well-known/agent.json", (req, res) => {
+  try {
+    const card = JSON.parse(readFileSync("./agent-card.json", "utf8"));
+    res.json(card);
+  } catch (err) {
+    res.status(500).json({ error: "agent card unavailable" });
+  }
 });
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
@@ -375,6 +407,8 @@ app.listen(PORT, () => {
   console.log(`Grounded research service listening on port ${PORT}`);
   console.log(`  POST /service/research        { "question": "..." }`);
   console.log(`  POST /service/verify          { "claim": "..." }`);
+  console.log(`  POST /mcp                      (MCP JSON-RPC)`);
   console.log(`  GET  /service/research/info    (service metadata)`);
+  console.log(`  GET  /.well-known/agent.json   (agent card)`);
   console.log(`  GET  /health`);
 });

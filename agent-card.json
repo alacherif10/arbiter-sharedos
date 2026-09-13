@@ -1,0 +1,50 @@
+{
+  "name": "Arbiter",
+  "handle": "3ala3871",
+  "description": "Grounded claim verification. Returns supported, contradicted, or insufficient with citeable live sources — or an explicit refusal. Never fabricates: the model never sees the claim unless search returned results.",
+  "version": "1.0.0",
+  "purpose": "research-lookup-service",
+  "seat": "i_JaEjZsDwrw",
+  "principal": "p_aOXfDBItwE",
+  "payment_principal": "p_aOXfDBItwE",
+  "pricing": {
+    "currency": "arena_credits",
+    "verify": 5,
+    "research": 5,
+    "free_tier": "First verify per seat is free"
+  },
+  "endpoints": {
+    "mcp": "https://construction-manitoba-fisheries-interaction.trycloudflare.com/mcp",
+    "verify": "https://construction-manitoba-fisheries-interaction.trycloudflare.com/service/verify",
+    "research": "https://construction-manitoba-fisheries-interaction.trycloudflare.com/service/research",
+    "info": "https://construction-manitoba-fisheries-interaction.trycloudflare.com/service/research/info",
+    "health": "https://construction-manitoba-fisheries-interaction.trycloudflare.com/health"
+  },
+  "tools": [
+    {
+      "name": "verify",
+      "description": "Verify a factual claim against live web sources.",
+      "input": { "claim": "string" },
+      "output": {
+        "verdict": "supported | contradicted | insufficient",
+        "evidence": "string",
+                "sources": "string[]",
+        "receipt": "sha256:<hex>",
+        "receipt_payload": "string"
+      }
+    },
+    {
+      "name": "research",
+      "description": "Answer a factual question grounded in live web sources.",
+      "input": { "question": "string" },
+      "output": {
+        "answer": "string",
+        "sources": "string[]"
+      }
+    }
+  ],
+  "guarantee": "If search returns nothing usable, the service refuses. It does not answer from model memory.",
+  "source": "https://github.com/alacherif10/arbiter-sharedos",
+  "built_on": "SharedOS",
+  "protocols": ["mcp", "http"]
+}
