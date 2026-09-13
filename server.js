@@ -3,7 +3,8 @@
  *
  * Two endpoints, one guarantee: every answer is grounded in live sources
  * with citeable URLs, or the service explicitly refuses. The model never
- * sees the question unless search returned results, so it cannot fabricate.
+ * sees the question unless search returned results, and low-signal sources
+ * (YouTube, Reddit, forums) are filtered out before the model sees them.
  *
  *   POST /service/research   { question } -> { answer, sources, note }
  *   POST /service/verify     { claim }    -> { verdict, evidence, sources,
@@ -45,6 +46,33 @@ const owner = { kind: "human", userId: "3ala3871" };
 const serviceAgent = { kind: "agent", agentId: "research-lookup-agent" };
 
 // ---------------------------------------------------------------------------
+// Source authority filter — reject user-generated content and low-signal
+// aggregators before the model ever sees them.
+// ---------------------------------------------------------------------------
+
+const BLOCKED_DOMAINS = [
+  "youtube.com",
+  "youtu.be",
+  "reddit.com",
+  "quora.com",
+  "twitter.com",
+  "x.com",
+  "facebook.com",
+  "tiktok.com",
+  "pinterest.com",
+  "medium.com",
+  "alchetron.com",
+  "answers.com",
+  "wikihow.com",
+  "blogspot.com",
+  "wordpress.com",
+];
+
+function isBlockedUrl(url) {
+  return BLOCKED_DOMAINS.some((d) => url.includes(d));
+}
+
+// ---------------------------------------------------------------------------
 // SharedOS kernel — deny-by-default, one grant, one purpose
 // ---------------------------------------------------------------------------
 
@@ -80,7 +108,7 @@ const kernel = new SharedOSKernel({
 });
 
 // ---------------------------------------------------------------------------
-// Turn driver — search first, refuse on empty, otherwise ground the model
+// Turn driver — search first, filter, refuse on empty, otherwise ground model
 // ---------------------------------------------------------------------------
 
 function makeResearchDriver(question, mode = "research") {
@@ -95,10 +123,19 @@ function makeResearchDriver(question, mode = "research") {
           let hits = [];
           let searchError = null;
           try {
-            hits = await ddgSearch(question, 3);
+            hits = await ddgSearch(question, 5);
           } catch (err) {
             console.error("Search failed:", err);
             searchError = err.message;
+          }
+
+          // Authority filter — drop user-generated and low-signal sources.
+          const before = hits.length;
+          hits = hits.filter((h) => !isBlockedUrl(h.url));
+          if (before !== hits.length) {
+            console.log(
+              `[filter] dropped ${before - hits.length} low-signal source(s)`,
+            );
           }
 
           if (!hits.length) {
@@ -111,7 +148,7 @@ function makeResearchDriver(question, mode = "research") {
                 sources: [],
                 note: searchError
                   ? `Search error: ${searchError}`
-                  : "No live results",
+                  : "No authoritative sources",
               },
             };
           }
@@ -127,8 +164,9 @@ function makeResearchDriver(question, mode = "research") {
             mode === "verify"
               ? "You are a fact-checker. Given ONLY the sources below, decide " +
                 "whether the following CLAIM is supported, contradicted, or " +
-                "has insufficient evidence. Respond in exactly this format, " +
-                "nothing else:\n" +
+                "has insufficient evidence. If the sources are about a " +
+                "different subject than the claim, the verdict MUST be " +
+                "insufficient. Respond in exactly this format, nothing else:\n" +
                 "VERDICT: <supported|contradicted|insufficient>\n" +
                 "EVIDENCE: <one sentence, cite [1] [2] etc.>\n\n" +
                 `CLAIM: ${question}\n\nSources:\n${context}`
@@ -181,7 +219,11 @@ function makeResearchDriver(question, mode = "research") {
               ? verdictMatch[1].toLowerCase()
               : "insufficient";
             const evidence = evidenceMatch ? evidenceMatch[1].trim() : raw;
-            const sources = pickCitedSources(evidence);
+
+            // An "insufficient" verdict must not attach sources — a
+            // mismatched citation is misleading.
+            const sources =
+              verdict === "insufficient" ? [] : pickCitedSources(evidence);
             const { receipt, receipt_payload } = makeReceipt(verdict, sources);
 
             return {
@@ -192,7 +234,10 @@ function makeResearchDriver(question, mode = "research") {
                 sources,
                 receipt,
                 receipt_payload,
-                note: "Verified against live sources.",
+                note:
+                  verdict === "insufficient"
+                    ? "No source clearly supported or contradicted the claim."
+                    : "Verified against live sources.",
               },
             };
           }
@@ -353,12 +398,14 @@ app.get("/service/research/info", (req, res) => {
   res.json({
     name: "Grounded Research & Verification",
     description:
-      "Two services in one. POST /service/research with {question} returns a " +
-      "concise answer grounded in live web sources, with source URLs. " +
-      "POST /service/verify with {claim} returns a verdict of supported, " +
-      "contradicted, or insufficient, with citeable evidence and a " +
-      "verifiable SHA-256 receipt. Both refuse rather than answer from " +
-      "model memory when no verified source is found.",
+      "Fast first-pass claim verification. POST /service/research with " +
+      "{question} returns a concise answer grounded in live web sources, " +
+      "with source URLs. POST /service/verify with {claim} returns a " +
+      "verdict of supported, contradicted, or insufficient, with the " +
+      "source URLs from live search and a verifiable SHA-256 receipt. " +
+      "Cites sources from search — does not fetch or hash page content. " +
+      "Both endpoints refuse rather than answer from model memory when no " +
+      "authoritative source is found.",
     endpoints: {
       research: {
         method: "POST",

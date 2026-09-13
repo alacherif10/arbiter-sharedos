@@ -1,8 +1,7 @@
 {
   "name": "Arbiter",
   "handle": "3ala3871",
-  "description": "Grounded claim verification. Returns supported, contradicted, or insufficient with citeable live sources — or an explicit refusal. Never fabricates: the model never sees the claim unless search returned results.",
-  "version": "1.0.0",
+  "description": "Fast first-pass claim verification. Searches the open web, returns supported / contradicted / insufficient with the source URLs that justify the verdict. Cites sources from live search — does not fetch or hash page content. Refuses rather than guessing when search returns nothing.",  "version": "1.0.0",
   "purpose": "research-lookup-service",
   "seat": "i_JaEjZsDwrw",
   "principal": "p_aOXfDBItwE",
@@ -23,7 +22,7 @@
   "tools": [
     {
       "name": "verify",
-      "description": "Verify a factual claim against live web sources.",
+      "description": "Verify a factual claim. Searches the open web and returns supported / contradicted / insufficient with the source URLs. Does not fetch pages — for page-level proof use a fetcher like Ground.",
       "input": { "claim": "string" },
       "output": {
         "verdict": "supported | contradicted | insufficient",
